@@ -1,0 +1,23 @@
+# Certificates and key material must never enter this repository.
+*.pfx
+*.p12
+*.cer
+*.crt
+*.key
+*.pem
+
+# Local, environment-specific settings (tenant IDs, client IDs, exclusion lists).
+# Only the *.sample.json files are tracked.
+*.local.json
+config/*.json
+!config/*.sample.json
+
+# Generated reports. Real tenant data must never be committed.
+out/
+reports/
+*.csv
+*.log
+
+# PowerShell / editor noise
+.vscode/
+*.psd1.bak
