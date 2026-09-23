@@ -20,6 +20,7 @@
         'Connect-EntraToolkit'
         'Assert-EntraPermission'
         'Write-EntraLog'
+        'Resolve-EntraAuthenticationMethodType'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

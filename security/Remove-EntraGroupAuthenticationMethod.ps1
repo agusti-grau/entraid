@@ -296,21 +296,20 @@ param(
 
 Import-Module (Join-Path $PSScriptRoot '..' 'common' 'EntraToolkit.Common.psd1') -Force -ErrorAction Stop
 
-# authenticationMethod objects deserialize to different .NET types across SDK
-# versions (a typed class in some, a bag with '@odata.type' in AdditionalProperties
-# in others). This catalog is the single source of truth mapping the odata short
-# name to whether/how the type can be deleted, so the rest of the script never
-# has to know about that inconsistency.
+# Removability and the type-specific Remove-Mg* cmdlet for each canonical type
+# name returned by the shared Resolve-EntraAuthenticationMethodType (common
+# module). Type -> odata.type resolution itself is NOT duplicated here; it lives
+# in that one shared function so this script and any other consumer stay in sync.
 $script:MethodCatalog = [ordered]@{
-    Password                = @{ TypeSuffix = 'passwordAuthenticationMethod'; Removable = $false }
-    Email                   = @{ TypeSuffix = 'emailAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationEmailMethod'; IdParam = 'EmailAuthenticationMethodId' }
-    Fido2                   = @{ TypeSuffix = 'fido2AuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationFido2Method'; IdParam = 'Fido2AuthenticationMethodId' }
-    MicrosoftAuthenticator  = @{ TypeSuffix = 'microsoftAuthenticatorAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationMicrosoftAuthenticatorMethod'; IdParam = 'MicrosoftAuthenticatorAuthenticationMethodId' }
-    Phone                   = @{ TypeSuffix = 'phoneAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationPhoneMethod'; IdParam = 'PhoneAuthenticationMethodId' }
-    SoftwareOath            = @{ TypeSuffix = 'softwareOathAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationSoftwareOathMethod'; IdParam = 'SoftwareOathAuthenticationMethodId' }
-    TemporaryAccessPass     = @{ TypeSuffix = 'temporaryAccessPassAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationTemporaryAccessPassMethod'; IdParam = 'TemporaryAccessPassAuthenticationMethodId' }
-    WindowsHelloForBusiness = @{ TypeSuffix = 'windowsHelloForBusinessAuthenticationMethod'; Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationWindowsHelloForBusinessMethod'; IdParam = 'WindowsHelloForBusinessAuthenticationMethodId' }
-    PlatformCredential       = @{ TypeSuffix = 'platformCredentialAuthenticationMethod'; Removable = $false }
+    Password                = @{ Removable = $false }
+    Email                   = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationEmailMethod'; IdParam = 'EmailAuthenticationMethodId' }
+    Fido2                   = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationFido2Method'; IdParam = 'Fido2AuthenticationMethodId' }
+    MicrosoftAuthenticator  = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationMicrosoftAuthenticatorMethod'; IdParam = 'MicrosoftAuthenticatorAuthenticationMethodId' }
+    Phone                   = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationPhoneMethod'; IdParam = 'PhoneAuthenticationMethodId' }
+    SoftwareOath            = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationSoftwareOathMethod'; IdParam = 'SoftwareOathAuthenticationMethodId' }
+    TemporaryAccessPass     = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationTemporaryAccessPassMethod'; IdParam = 'TemporaryAccessPassAuthenticationMethodId' }
+    WindowsHelloForBusiness = @{ Removable = $true; RemoveCmdlet = 'Remove-MgUserAuthenticationWindowsHelloForBusinessMethod'; IdParam = 'WindowsHelloForBusinessAuthenticationMethodId' }
+    PlatformCredential      = @{ Removable = $false }
 }
 
 # Methods capable of satisfying an MFA requirement on their own. Used only by
@@ -481,38 +480,6 @@ function Assert-RequiredGraphPermission {
     Write-ScriptLog -Level Verbose -Message "Permission check passed. Granted scopes: $($granted -join ', ')."
 }
 
-function Resolve-AuthMethodTypeName {
-    <#
-        Maps a returned authenticationMethod object to one of $script:MethodCatalog's
-        keys. Tries AdditionalProperties['@odata.type'] first (present when the SDK
-        does not have a concrete typed class for the object), then falls back to
-        the .NET type name (present when it does): 'MicrosoftGraphFido2Authentication
-        Method' -> strip the 'MicrosoftGraph' prefix -> lower-case the first letter
-        -> 'fido2AuthenticationMethod', which is exactly the odata short name and
-        matches TypeSuffix. A type Graph adds in the future that this catalog does
-        not know about still resolves - to an explicit "Unknown (...)" bucket -
-        instead of throwing.
-    #>
-    [CmdletBinding()]
-    param($Method)
-
-    $odataType = $null
-    if ($Method.AdditionalProperties -and $Method.AdditionalProperties.ContainsKey('@odata.type')) {
-        $odataType = ($Method.AdditionalProperties['@odata.type'] -as [string]) -replace '^#microsoft\.graph\.', ''
-    }
-    if (-not $odataType) {
-        $typeName = $Method.GetType().Name -replace '^MicrosoftGraph', ''
-        if ($typeName.Length -gt 0) {
-            $odataType = [char]::ToLowerInvariant($typeName[0]) + $typeName.Substring(1)
-        }
-    }
-
-    foreach ($name in $script:MethodCatalog.Keys) {
-        if ($script:MethodCatalog[$name].TypeSuffix -eq $odataType) { return $name }
-    }
-    return "Unknown ($odataType)"
-}
-
 function New-ResultRow {
     <#
         Builds one audit row, appends it to the run-wide $script:allResults list
@@ -648,7 +615,7 @@ foreach ($member in $members) {
     }
 
     $resolved = @(foreach ($m in $inventory) {
-        [pscustomobject]@{ Method = $m; TypeName = Resolve-AuthMethodTypeName $m; Id = $m.Id }
+        [pscustomobject]@{ Method = $m; TypeName = (Resolve-EntraAuthenticationMethodType -AuthenticationMethod $m); Id = $m.Id }
     })
 
     $inventorySummary = ($resolved | Group-Object TypeName | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join ', '
